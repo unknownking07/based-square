@@ -28,15 +28,95 @@ const GestureDetector = {
     handScale: 1,
     isHandPresent: false,
 
+    // Scatter detection (second hand open)
+    lastHandDistance: Infinity,
+    clapDetected: false,
+    clapCooldown: 0,
+    clapPoint: { x: 0, y: 0 },    // Where the scatter occurred
+    twoHandsPresent: false,
+    secondHandOpen: false,        // Track if second hand is open
+
     // Initialize
     init() {
         this.state = this.STATES.IDLE;
         this.transitionProgress = 0;
         this.pinchHistory = [];
+        this.clapDetected = false;
+        this.clapCooldown = 0;
+        this.secondHandOpen = false;
+    },
+
+    // Calculate palm center from landmarks
+    getPalmCenter(landmarks, canvasWidth, canvasHeight) {
+        // Use wrist (0) and middle finger base (9) to estimate palm center
+        const wrist = landmarks[0];
+        const middleBase = landmarks[9];
+        return {
+            x: ((wrist.x + middleBase.x) / 2) * canvasWidth,
+            y: ((wrist.y + middleBase.y) / 2) * canvasHeight
+        };
+    },
+
+    // Check if hand has spread fingers (open palm)
+    isHandOpen(landmarks, canvasWidth, canvasHeight) {
+        // Fingertip landmarks: thumb=4, index=8, middle=12, ring=16, pinky=20
+        // Base landmarks: index=5, middle=9, ring=13, pinky=17
+        const fingertips = [8, 12, 16, 20]; // excluding thumb for simplicity
+        const bases = [5, 9, 13, 17];
+
+        let extendedCount = 0;
+
+        for (let i = 0; i < fingertips.length; i++) {
+            const tip = landmarks[fingertips[i]];
+            const base = landmarks[bases[i]];
+
+            // Finger is extended if tip is further from wrist than base
+            const wrist = landmarks[0];
+            const tipDist = Utils.distance(tip.x, tip.y, wrist.x, wrist.y);
+            const baseDist = Utils.distance(base.x, base.y, wrist.x, wrist.y);
+
+            if (tipDist > baseDist * 1.2) { // Tip at least 20% further than base
+                extendedCount++;
+            }
+        }
+
+        // Hand is open if at least 3 fingers are extended
+        return extendedCount >= 3;
     },
 
     // Update with new hand data
     update(hands, canvasWidth, canvasHeight) {
+        // Update cooldowns
+        if (this.clapCooldown > 0) {
+            this.clapCooldown -= 0.016;
+        }
+
+        // Reset clap detected each frame (it's a one-frame event)
+        this.clapDetected = false;
+
+        // Check for two-hand gesture (second hand open triggers scatter)
+        this.twoHandsPresent = hands && hands.length >= 2;
+
+        if (this.twoHandsPresent && this.clapCooldown <= 0) {
+            const hand2 = hands[1]; // Second hand
+
+            if (hand2.landmarks && hand2.landmarks.length >= 21) {
+                const isOpen = this.isHandOpen(hand2.landmarks, canvasWidth, canvasHeight);
+
+                // Trigger scatter when second hand becomes open (transition from closed to open)
+                if (isOpen && !this.secondHandOpen) {
+                    this.clapDetected = true;
+                    this.clapCooldown = 0.5; // 500ms cooldown
+                    this.clapPoint = this.getPalmCenter(hand2.landmarks, canvasWidth, canvasHeight);
+                }
+
+                this.secondHandOpen = isOpen;
+            }
+        } else if (!this.twoHandsPresent) {
+            this.secondHandOpen = false;
+        }
+
+        // Original single-hand pinch logic
         if (!hands || hands.length === 0) {
             this.isHandPresent = false;
             // Slowly fade out when hand disappears
@@ -142,7 +222,11 @@ const GestureDetector = {
             isSquare: this.state === this.STATES.CUBE_FORMED,
             isCube: this.state === this.STATES.CUBE_FORMED,
             pinchDistance: this.pinchDistance,
-            isHandPresent: this.isHandPresent
+            isHandPresent: this.isHandPresent,
+            // Clap state
+            clapDetected: this.clapDetected,
+            clapPoint: this.clapPoint,
+            twoHandsPresent: this.twoHandsPresent
         };
     },
 

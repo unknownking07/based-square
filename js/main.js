@@ -13,6 +13,7 @@ const App = {
     statusIndicator: null,
     statusText: null,
     particleCanvas: null,
+    basepostingText: null,
 
     // Initialize application
     init() {
@@ -23,6 +24,7 @@ const App = {
         this.statusIndicator = document.getElementById('status-indicator');
         this.statusText = document.getElementById('status-text');
         this.particleCanvas = document.getElementById('particle-canvas');
+        this.basepostingText = document.getElementById('baseposting-text');
 
         // Set up FPS counter
         this.fpsCounter = Utils.createFPSCounter();
@@ -88,15 +90,30 @@ const App = {
         // Update status
         const gestureState = GestureDetector.getState();
 
+        // Show/hide baseposting text based on cube formation
+        if (gestureState.isSquare) {
+            this.basepostingText.classList.remove('hidden');
+            this.basepostingText.classList.add('visible');
+        } else {
+            this.basepostingText.classList.remove('visible');
+            this.basepostingText.classList.add('hidden');
+        }
+
         if (!detected) {
             this.setStatus('Show your hand to begin...');
             this.statusIndicator.className = 'status-indicator';
+        } else if (gestureState.clapDetected) {
+            this.setStatus('✋ Scatter! Particles exploded!');
+            this.statusIndicator.className = 'status-indicator forming';
         } else if (gestureState.isSquare) {
             this.setStatus('Cube formed! Open hand to dissolve');
             this.statusIndicator.className = 'status-indicator forming';
         } else if (gestureState.isForming) {
             this.setStatus('Forming cube... Hold pinch');
             this.statusIndicator.className = 'status-indicator forming';
+        } else if (gestureState.twoHandsPresent) {
+            this.setStatus('Two hands — Open second hand to scatter!');
+            this.statusIndicator.className = 'status-indicator hands-detected';
         } else {
             this.setStatus('Hand detected — Pinch to form cube');
             this.statusIndicator.className = 'status-indicator hands-detected';

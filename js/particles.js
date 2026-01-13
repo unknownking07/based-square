@@ -13,6 +13,11 @@ const ParticleSystem = {
         cubeSize: 0.28,       // Percentage of min dimension - smaller = denser
         gridNoise: 1.5,       // Less noise for tighter formation
         formationSpeed: 0.15, // How fast particles rush to cube
+        dissolveExplosionForce: 25, // Force applied when dissolving
+        dissolveParticleBoost: 2.5, // Speed multiplier during dissolve
+        // Clap scatter settings
+        clapExplosionForce: 60,    // Much stronger than dissolve
+        clapScatterRadius: 800,     // How far particles scatter
     },
 
     // State
@@ -22,6 +27,13 @@ const ParticleSystem = {
     cubePositions: [],
     handLandmarks: [],
     time: 0,
+    wasForming: false, // Track previous state for dissolve detection
+    dissolveTriggered: false,
+    dissolveTime: 0,
+    // Clap scatter state
+    clapTriggered: false,
+    clapTime: 0,
+    clapPoint: { x: 0, y: 0 },
     handCenter: { x: 0, y: 0 },
 
     // WebGL resources
@@ -228,9 +240,41 @@ const ParticleSystem = {
     // Update particle physics
     update(gestureState) {
         this.time += 0.016;
-        const { damping, attractionStrength, noiseStrength, maxSpeed, formationSpeed } = this.config;
+        const { damping, attractionStrength, noiseStrength, maxSpeed, formationSpeed, clapExplosionForce } = this.config;
 
         const formProgress = gestureState ? gestureState.progress : 0;
+        const isForming = formProgress > 0.01;
+
+        // Detect dissolve transition (was forming, now not forming)
+        if (this.wasForming && !isForming) {
+            this.dissolveTriggered = true;
+            this.dissolveTime = 0;
+        }
+        this.wasForming = isForming;
+
+        // Update dissolve timer
+        if (this.dissolveTriggered) {
+            this.dissolveTime += 0.016;
+            if (this.dissolveTime > 2) {
+                this.dissolveTriggered = false;
+            }
+        }
+
+        // Detect clap gesture
+        if (gestureState && gestureState.clapDetected) {
+            this.clapTriggered = true;
+            this.clapTime = 0;
+            this.clapPoint = gestureState.clapPoint || { x: this.canvas.width / 2, y: this.canvas.height / 2 };
+        }
+
+        // Update clap timer
+        if (this.clapTriggered) {
+            this.clapTime += 0.016;
+            if (this.clapTime > 1.5) {
+                this.clapTriggered = false;
+            }
+        }
+
         const easedProgress = Utils.easeOutExpo(formProgress); // Faster easing for snappy response
 
         for (let i = 0; i < this.particles.length; i++) {
@@ -264,7 +308,46 @@ const ParticleSystem = {
                 // Increase brightness during formation
                 p.alpha = Utils.lerp(p.baseAlpha, 1.2, easedDelayedProgress);
             } else {
-                // FREE FLOWING MODE - attract to hand
+                // FREE FLOWING MODE - check for clap and dissolve explosions
+                const { dissolveExplosionForce, dissolveParticleBoost } = this.config;
+
+                // CLAP SCATTER - massive explosion from clap point
+                if (this.clapTriggered && this.clapTime < 0.4) {
+                    const dx = p.x - this.clapPoint.x;
+                    const dy = p.y - this.clapPoint.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+
+                    // Massive radial explosion from clap point
+                    const clapStrength = clapExplosionForce * (1 - this.clapTime * 2.5);
+                    const angle = Math.atan2(dy, dx) + Utils.randomRange(-0.3, 0.3);
+                    const distanceFactor = Math.min(1, 300 / dist); // Stronger effect on closer particles
+
+                    p.vx += Math.cos(angle) * clapStrength * distanceFactor * 3;
+                    p.vy += Math.sin(angle) * clapStrength * distanceFactor * 3;
+
+                    // Flash bright white during clap impact
+                    p.alpha = Math.min(2.0, p.alpha + 0.3);
+                }
+
+                // Apply explosion burst when dissolving
+                if (this.dissolveTriggered && this.dissolveTime < 0.5) {
+                    const centerX = this.canvas.width / 2;
+                    const centerY = this.canvas.height / 2;
+                    const dx = p.x - centerX;
+                    const dy = p.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+
+                    // Radial explosion force - particles burst outward
+                    const explosionStrength = dissolveExplosionForce * (1 - this.dissolveTime * 2);
+                    const angle = Math.atan2(dy, dx) + Utils.randomRange(-0.5, 0.5);
+                    p.vx += Math.cos(angle) * explosionStrength * dissolveParticleBoost;
+                    p.vy += Math.sin(angle) * explosionStrength * dissolveParticleBoost;
+
+                    // Boost alpha during explosion for more visible particles
+                    p.alpha = Math.min(1.5, p.alpha + 0.1);
+                }
+
+                // Attract to hand
                 if (this.handLandmarks.length > 0) {
                     const dx = this.handCenter.x - p.x;
                     const dy = this.handCenter.y - p.y;
@@ -278,12 +361,13 @@ const ParticleSystem = {
                     }
                 }
 
-                // Organic noise movement
+                // Organic noise movement - enhanced during dissolve
+                const noiseMultiplier = this.dissolveTriggered && this.dissolveTime < 1 ? 3 : 1;
                 const noiseX = Utils.noise2D(p.x * 0.003 + this.time * 0.3, p.noiseOffset);
                 const noiseY = Utils.noise2D(p.y * 0.003 + this.time * 0.3, p.noiseOffset + 100);
 
-                p.vx += noiseX * noiseStrength;
-                p.vy += noiseY * noiseStrength;
+                p.vx += noiseX * noiseStrength * noiseMultiplier;
+                p.vy += noiseY * noiseStrength * noiseMultiplier;
 
                 // Apply standard damping
                 p.vx *= damping;
